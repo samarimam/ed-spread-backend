@@ -5,6 +5,7 @@ const HttpError = require('../utils/httpError');
 const mongoose = require('mongoose');
 const embeddingService = require('../utils/embeddingService');
 const llmService = require('../utils/llmServices');
+const Logger = require('nodemon/lib/utils/log');
 
 exports.createCourse = async (req, res, next) => {
     const { title, description, type, price, image, url, notesPdf, videoUrls } =
@@ -224,9 +225,8 @@ exports.searchCourses = async (req, res) => {
 
         // Generate query embedding
         console.log('Generating embedding for query...');
-        const queryEmbedding = await embeddingService.generateQueryEmbedding(
-            query
-        );
+        const queryEmbedding =
+            await embeddingService.generateQueryEmbedding(query);
 
         // Perform vector search
         console.log('Performing vector search...');
@@ -255,7 +255,7 @@ exports.searchCourses = async (req, res) => {
             },
             {
                 $match: {
-                    score: { $gte: 0.8 },
+                    score: { $gte: 0.7 },
                 },
             },
         ]);
