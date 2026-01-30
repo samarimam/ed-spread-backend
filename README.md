@@ -12,6 +12,12 @@ This project is designed to showcase **modern full-stack engineering**, **AI int
 
 > Backend APIs are hosted on **Render**.
 
+![Homepage](Python.png)
+
+![Homepage](javaScript.png)
+
+
+
 ---
 
 ## ✨ Key Highlights
