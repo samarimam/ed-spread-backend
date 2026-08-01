@@ -128,15 +128,15 @@ class LLMService {
                 .join('\n');
 
             const prompt = `
-You are a learning advisor.
+                You are a learning advisor.
 
-User wants to learn: "${userQuery}"
+                User wants to learn: "${userQuery}"
 
-Top recommended courses:
-${courseList}
+                Top recommended courses:
+                ${courseList}
 
-Write a concise 2–3 sentence summary explaining why these courses are good matches.
-`;
+                Write a concise 2–3 sentence summary explaining why these courses are good matches.
+                `;
 
             const summary = await this.generateText(prompt);
 
