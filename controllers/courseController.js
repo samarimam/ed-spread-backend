@@ -6,6 +6,8 @@ const mongoose = require('mongoose');
 const embeddingService = require('../utils/embeddingService');
 const llmService = require('../utils/llmServices');
 const Logger = require('nodemon/lib/utils/log');
+const axios = require('axios');
+const ML_API = process.env.ML_API;
 
 exports.createCourse = async (req, res, next) => {
     const { title, description, type, price, image, url, notesPdf, videoUrls } =
@@ -211,7 +213,7 @@ exports.searchCourses = async (req, res) => {
     try {
         const {
             query,
-            limit = 3,
+            limit = 5,
             explain = 'true',
             mode = 'summary',
         } = req.query;
@@ -237,7 +239,7 @@ exports.searchCourses = async (req, res) => {
                     path: 'embedding',
                     queryVector: queryEmbedding,
                     numCandidates: 100,
-                    limit: parseInt(limit),
+                    limit: 20,
                 },
             },
             {
@@ -271,6 +273,20 @@ exports.searchCourses = async (req, res) => {
             });
         }
 
+        for (const course of courses) {
+            const response = await axios.post(`${ML_API}/predict`, {
+                similarity: course.score,
+                price: course.price,
+                type: course.type,
+                query_length: query.split(' ').length,
+                title_length: course.title.length,
+            });
+
+            course.mlScore = response.data.recommendation_probability;
+        }
+        courses.sort((a, b) => b.mlScore - a.mlScore);
+        const finalCourses = courses.slice(0, parseInt(limit));
+
         // Generate explanations if requested
         let result;
         if (explain === 'true') {
@@ -280,12 +296,15 @@ exports.searchCourses = async (req, res) => {
                 // Faster: Single summary for all courses
                 result = await llmService.generateOverallSummary(
                     query,
-                    courses
+                    finalCourses
                 );
             } else {
                 // More detailed: Individual explanations (slower due to rate limits)
                 const coursesWithExplanations =
-                    await llmService.generateBatchExplanations(query, courses);
+                    await llmService.generateBatchExplanations(
+                        query,
+                        finalCourses
+                    );
                 result = {
                     courses: coursesWithExplanations,
                 };
@@ -298,7 +317,7 @@ exports.searchCourses = async (req, res) => {
                 ...(result.overall_summary && {
                     summary: result.overall_summary,
                 }),
-                data: result.courses,
+                data: result.finalCourses,
             });
         } else {
             // No explanations
