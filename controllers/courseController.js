@@ -6,8 +6,8 @@ const mongoose = require('mongoose');
 const embeddingService = require('../utils/embeddingService');
 const llmService = require('../utils/llmServices');
 const Logger = require('nodemon/lib/utils/log');
-const axios = require('axios');
-const ML_API = process.env.ML_API;
+
+const recommendationModel = require('../ml/recommendationModel');
 
 exports.createCourse = async (req, res, next) => {
     const { title, description, type, price, image, url, notesPdf, videoUrls } =
@@ -224,14 +224,14 @@ exports.searchCourses = async (req, res) => {
                 message: 'Query parameter is required',
             });
         }
-
-        // Generate query embedding
-        console.log('Generating embedding for query...');
+        const cleanQuery = query.trim();
+        // Generate embedding
+        console.log('Generating query embedding...');
         const queryEmbedding =
-            await embeddingService.generateQueryEmbedding(query);
-
-        // Perform vector search
+            await embeddingService.generateQueryEmbedding(cleanQuery);
+        // Vector Search
         console.log('Performing vector search...');
+
         const courses = await Course.aggregate([
             {
                 $vectorSearch: {
@@ -265,7 +265,7 @@ exports.searchCourses = async (req, res) => {
         if (courses.length === 0) {
             return res.status(200).json({
                 success: true,
-                query: query,
+                cleanQuery,
                 count: 0,
                 data: [],
                 message:
@@ -273,64 +273,88 @@ exports.searchCourses = async (req, res) => {
             });
         }
 
-        for (const course of courses) {
-            const response = await axios.post(`${ML_API}/predict`, {
+        // ================================
+        // Feature Engineering + ML Ranking
+        // ================================
+
+        const queryLength = cleanQuery.trim().split(/\s+/).length;
+
+        const rankedCourses = courses.map((course) => {
+            const features = {
                 similarity: course.score,
                 price: course.price,
                 type: course.type,
-                query_length: query.split(' ').length,
-                title_length: course.title.length,
-            });
+                queryLength,
+                titleLength: course.title.length,
+            };
 
-            course.mlScore = response.data.recommendation_probability;
-        }
-        courses.sort((a, b) => b.mlScore - a.mlScore);
-        const finalCourses = courses.slice(0, parseInt(limit));
+            const rfScore = recommendationModel.predict(features);
 
-        // Generate explanations if requested
+            const finalScore = course.score * 0.75 + rfScore * 0.25;
+
+            return {
+                ...course,
+                mlScore: rfScore,
+                finalScore,
+            };
+        });
+
+        // Sort using ML score first
+        // If equal, use vector similarity
+
+        rankedCourses.sort((a, b) => b.finalScore - a.finalScore);
+
+        // Return only requested number of courses
+
+        const finalCourses = rankedCourses.slice(0, parseInt(limit));
+
+        // ================================
+        // Generate LLM Explanations
+        // ================================
+
         let result;
+
         if (explain === 'true') {
             console.log('Generating explanations...');
 
             if (mode === 'summary') {
-                // Faster: Single summary for all courses
                 result = await llmService.generateOverallSummary(
-                    query,
+                    cleanQuery,
                     finalCourses
                 );
             } else {
-                // More detailed: Individual explanations (slower due to rate limits)
                 const coursesWithExplanations =
                     await llmService.generateBatchExplanations(
-                        query,
+                        cleanQuery,
                         finalCourses
                     );
+
                 result = {
                     courses: coursesWithExplanations,
                 };
             }
 
-            res.status(200).json({
+            return res.status(200).json({
                 success: true,
-                query: query,
+                quecleanQueryry,
                 count: result.courses.length,
                 ...(result.overall_summary && {
                     summary: result.overall_summary,
                 }),
-                data: result.finalCourses,
-            });
-        } else {
-            // No explanations
-            res.status(200).json({
-                success: true,
-                query: query,
-                count: courses.length,
-                data: courses,
+                data: result.courses,
             });
         }
+
+        return res.status(200).json({
+            success: true,
+            cleanQuery,
+            count: finalCourses.length,
+            data: finalCourses,
+        });
     } catch (error) {
         console.error('Error searching courses:', error);
-        res.status(500).json({
+
+        return res.status(500).json({
             success: false,
             message: 'Failed to search courses',
             error: error.message,
